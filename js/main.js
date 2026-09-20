@@ -2,7 +2,9 @@
 
 import { buildSurface, surfaceFromHeights, sampleZ, PATTERN_DEFAULTS } from './pattern.js';
 import { parseStl, stlToHeights } from './stl.js';
-import { compensate, machinedSurface, scallopHeight, stepoverForScallop, TOOL_DEFAULTS } from './tool.js';
+import {
+  compensate, machinedSurface, scallopHeight, stepoverForScallop, slopeTangent, TOOL_DEFAULTS,
+} from './tool.js';
 import { buildToolpaths, CAM_DEFAULTS, toolLabel, strategyLabel } from './toolpath.js';
 import { toGcode, POST_DEFAULTS } from './gcode.js';
 import { surfaceToStl, heightmapPixels, depthCsv } from './export.js';
@@ -171,7 +173,14 @@ function rebuild() {
   state.surf = surf;
   state.toolZ = comp.z;
   state.realZ = machinedSurface(surf, comp.z, tool);
-  state.maxLift = comp.maxLift;
+  // Gerçekte kalan malzeme: işlenmiş yüzey ile ideal arasındaki en büyük fark.
+  let residual = 0;
+  for (let i = 0; i < surf.z.length; i++) {
+    if (!surf.inside[i]) continue;
+    const d = state.realZ[i] - surf.z[i];
+    if (d > residual) residual = d;
+  }
+  state.residual = residual;
   // Desen değişti: eldeki yollar artık geçersiz.
   state.result = null;
   state.gcode = null;
@@ -250,7 +259,8 @@ function report() {
   const s = state.surf;
   const tool = finishTool();
   const step = num('c-finishStepover', 0.8);
-  const scal = scallopHeight(tool, step);
+  const slope = slopeTangent(s);
+  const scal = scallopHeight(tool, step, slope);
   let deepReal = 0;
   for (const v of state.realZ) if (v < deepReal) deepReal = v;
 
@@ -258,7 +268,8 @@ function report() {
     chip('Panel ', `${fmt(s.panelW, 0)}×${fmt(s.panelH, 0)} mm`),
     chip('İdeal en derin ', `${fmt(s.minZ, 2)} mm`),
     chip('Uçla ulaşılan ', `${fmt(deepReal, 2)} mm`),
-    chip('Tırtık ', `${fmt(scal, 3)} mm`),
+    chip('Kalan malzeme ', `${fmt(state.residual || 0, 2)} mm`),
+    chip(tool.type === 'flat' ? 'Tipik kademe ' : 'Tırtık ', `${fmt(scal, 3)} mm`),
     chip('Çözünürlük ', `${fmt(s.mmPerPx, 2)} mm/örnek`),
   ];
   if (state.source === 'stl' && state.stlTris) {
@@ -282,16 +293,29 @@ function report() {
   if (Math.abs(s.minZ) > num('c-thickness', 25) - 1) {
     warns.push(`Derinlik (${fmt(Math.abs(s.minZ), 1)} mm) malzeme kalınlığına çok yakın.`);
   }
-  if (state.maxLift > 0.3) {
+  if (state.residual > 1) {
     const care = state.source === 'stl'
       ? 'daha ince uç, daha az derinlik ya da modelin keskin köşelerini yumuşatmak'
       : 'daha ince uç, daha az bant ya da "yuvarlak dipli oluk" kesiti';
     warns.push(
       `${tool.dia} mm ${toolLabel(tool)} en dar yerlere tam giremiyor: ` +
-      `${fmt(state.maxLift, 2)} mm sığ kalıyor, o köşeler uç yarıçapı kadar ` +
-      `yuvarlanır. Önizleme zaten gerçekte çıkacak yüzeyi gösteriyor; daha ` +
-      `keskin detay için ${care}.`
+      `${fmt(state.residual, 2)} mm malzeme kalıyor, o köşeler uç yarıçapı ` +
+      `kadar yuvarlanır. Önizleme zaten gerçekte çıkacak yüzeyi gösteriyor; ` +
+      `daha keskin detay için ${care}.`
     );
+  }
+  // Düz freze + sivri dipli kesit, bu programın en sık rastlanan çıkmazı.
+  if (tool.type === 'flat' && state.source === 'pattern') {
+    const kesit = str('c-profileKind', 'dome');
+    if (['dome', 'vee', 'saw'].includes(kesit) && state.residual > 1) {
+      warns.push(
+        `Bu kesitin vadi dipleri sivri; ${tool.dia} mm düz freze oraya giremiyor ` +
+        `(${fmt(state.residual, 1)} mm kalıyor, dibe ${fmt(Math.abs(deepReal), 1)} mm ` +
+        `inilebiliyor ama ideal ${fmt(Math.abs(s.minZ), 1)} mm). ` +
+        `Kesiti <b>"Yumuşak dalga"</b> yapın: aynı derinliğe inilir, ortalama ` +
+        `sapma 0,01 mm'ye düşer. Ya da "🔩 Düz frezeye göre" hazırına basın.`
+      );
+    }
   }
   if (state.source === 'stl' && state.stlInfo) {
     if (state.stlInfo.coverage < 0.04) {
@@ -357,6 +381,13 @@ const PRESETS = {
     domeShape: 'yok', domeRise: 0, rimWidth: 16, levels: 0 },
   cicek: { pattern: 'flower', bands: 8, arms: 6, petal: 0.35, profileKind: 'sine', depth: 9,
     depthCenter: 1.2, depthRim: 0.6, domeShape: 'kubbe', domeRise: 5, rimWidth: 14, levels: 0 },
+  // 6 mm düz frezeyle ölçülerek seçildi: yumuşak dalga kesitinde vadi dipleri
+  // yuvarlak olduğu için uç her yere giriyor — ideal derinliğin %99'una
+  // inilebiliyor, ortalama sapma 0,01 mm. Sivri dipli kesitlerde 4-5 mm kalıyor.
+  duzfreze: { pattern: 'twist', bands: 5, swirl: 2.8, swirlMode: 'merkez', falloffPow: 1.6,
+    angle: 20, profileKind: 'sine', skew: 0, sharpness: 1, levels: 0, depth: 12,
+    depthCenter: 1, depthRim: 0.8, domeShape: 'kubbe', domeRise: 3, rimWidth: 20,
+    centerFlat: 0, shape: 'disc' },
   kademe: { pattern: 'ripple', bands: 6, swirl: 0, profileKind: 'sine', skew: 0, depth: 16,
     levels: 5, depthCenter: 1, depthRim: 1, domeShape: 'kubbe', domeRise: 6, rimWidth: 20,
     shape: 'disc' },
@@ -447,7 +478,7 @@ function downloadPng() {
 // --------------------------------------------------------------- kayıt
 
 function collectSettings() {
-  const out = {};
+  const out = { schema: 2 };
   for (const el of document.querySelectorAll('[id^="c-"]')) {
     out[el.id] = el.type === 'checkbox' ? el.checked : el.value;
   }
@@ -470,7 +501,18 @@ function save() {
 }
 
 function load() {
-  try { applySettings(JSON.parse(localStorage.getItem(STORE_KEY) || 'null')); } catch { /* yoksay */ }
+  try {
+    const data = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+    if (!data) return;
+    // Varsayılan finiş ucu bilyadan düz frezeye çekildi. Daha önce kaydedilmiş
+    // ayarlarda eski varsayılan duruyorsa bir kereye mahsus güncellenir;
+    // kullanıcının bilerek seçtiği başka bir uç varsa dokunulmaz.
+    if (!data.schema && data['c-finishType'] === 'ball' && Number(data['c-finishDia']) === 6) {
+      data['c-finishType'] = 'flat';
+    }
+    data.schema = 2;
+    applySettings(data);
+  } catch { /* yoksay */ }
 }
 
 // ----------------------------------------------------------------- olaylar
@@ -637,11 +679,28 @@ function init() {
   els['btn-scallop'].addEventListener('click', () => {
     const t = finishTool();
     const target = num('c-scallopTarget', 0.03);
-    const step = stepoverForScallop(t, target);
+    const slope = state.surf ? slopeTangent(state.surf) : 0.5;
+    const step = stepoverForScallop(t, target, slope);
     els['c-finishStepover'].value = step.toFixed(2);
-    els['scallop-hint'].textContent =
-      `${t.dia} mm ${toolLabel(t)} ile ${target} mm tırtık için yanal adım ${step.toFixed(2)} mm. ` +
-      `Daha küçük adım = daha pürüzsüz ama daha uzun süre.`;
+
+    if (t.type === 'flat') {
+      const aci = Math.round((Math.atan(slope) * 180) / Math.PI);
+      const bilya = stepoverForScallop({ ...t, type: 'ball' }, target);
+      els['scallop-hint'].innerHTML =
+        `Düz frezede iz, ucun çapıyla değil desenin <b>dikliğiyle</b> belirlenir: ` +
+        `kademe ≈ adım × tan(eğim). Bu tasarımın dik yamaçları ${aci}°, ` +
+        `${target} mm iz için adım <b>${step.toFixed(2)} mm</b> gerekiyor — ` +
+        `aynı işi bilya uç ${bilya.toFixed(2)} mm adımla yapardı, yani ` +
+        `${Math.round(bilya / step)} kat daha kısa sürede. ` +
+        `Asıl kazanç adımı kısmakta değil kesitte: <b>"Yumuşak dalga"</b> ` +
+        `kesitte vadi dipleri yuvarlak olur, uç her yere girer ve ortalama ` +
+        `sapma 0,01 mm'ye iner. Sivri dipli kesitlerde ise adımı ne kadar ` +
+        `kısarsan kıs, dibe inilemez.`;
+    } else {
+      els['scallop-hint'].textContent =
+        `${t.dia} mm ${toolLabel(t)} ile ${target} mm tırtık için yanal adım ` +
+        `${step.toFixed(2)} mm. Daha küçük adım = daha pürüzsüz ama daha uzun süre.`;
+    }
     syncOutputs();
     scheduleRebuild();
   });

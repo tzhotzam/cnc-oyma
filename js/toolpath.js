@@ -9,7 +9,9 @@
 // z ≤ 0 (0 = malzeme üst yüzeyi). Sıfır noktası kaydırması G-code aşamasında.
 
 import { sampleZ, edgeDistance } from './pattern.js';
-import { compensate, toolRadius, TOOL_DEFAULTS, scallopHeight } from './tool.js';
+import {
+  compensate, machinedSurface, toolRadius, TOOL_DEFAULTS, scallopHeight, slopeTangent,
+} from './tool.js';
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const TAU = Math.PI * 2;
@@ -546,6 +548,17 @@ export function buildToolpaths(surf, camIn) {
   const finComp = compensate(surf, finishTool);
   const finishMap = { ...surf, z: finComp.z };
 
+  // GERÇEKTE KALAN MALZEME. Takım merkezinin ne kadar yükseldiği (maxLift)
+  // yanıltıcıdır: dik bir basamağın kenarında merkez tavana vurur ama taban
+  // pekâlâ işlenir. Doğru ölçü, işlenmiş yüzeyle idealin farkıdır.
+  const machined = machinedSurface(surf, finComp.z, finishTool);
+  let residual = 0;
+  for (let i = 0; i < machined.length; i++) {
+    if (surf.inside && !surf.inside[i]) continue;
+    const d = machined[i] - surf.z[i];
+    if (d > residual) residual = d;
+  }
+
   const passes = [];
   const inset = 0;                       // takım merkezi panel sınırına kadar gider
   let minZ = 0;
@@ -633,13 +646,14 @@ export function buildToolpaths(surf, camIn) {
     }
   }
 
-  const scal = scallopHeight(finishTool, fstep);
-  if (finComp.maxLift > 0.3) {
+  const slope = slopeTangent(surf);
+  const scal = scallopHeight(finishTool, fstep, slope);
+  if (residual > 1) {
     warnings.push(
-      `Takım oluk diplerine tam giremiyor: en dar yerde ${finComp.maxLift.toFixed(2)} mm ` +
-      `daha sığ kalıyor, dipler takım yarıçapı kadar yuvarlanır. (Önizleme zaten ` +
-      `gerçekte çıkacak yüzeyi gösteriyor.) İstemiyorsanız: daha ince uç, daha az ` +
-      `bant ya da "yuvarlak dip (oluk)" kesiti.`
+      `Takım en dar yerlere tam giremiyor: ${residual.toFixed(2)} mm malzeme ` +
+      `kalıyor, o köşeler uç yarıçapı kadar yuvarlanır. (Önizleme zaten gerçekte ` +
+      `çıkacak yüzeyi gösteriyor.) Daha keskin detay için daha ince uç ya da ` +
+      `daha az bant.`
     );
   }
   if (surf.mmPerPx > toolRadius(finishTool) / 1.5) {
@@ -651,16 +665,24 @@ export function buildToolpaths(surf, camIn) {
   if (Math.abs(minZ) > cam.thickness - 1) {
     warnings.push(`Toplam derinlik (${Math.abs(minZ).toFixed(1)} mm) malzeme kalınlığına çok yakın.`);
   }
-  if (finishTool.type === 'flat') {
-    warnings.push('Finişte düz freze eğri yüzeyde kademe bırakır; bilya (küre) uç önerilir.');
+  if (finishTool.type === 'flat' && scal > 0.08) {
+    const aci = Math.round((Math.atan(slope) * 180) / Math.PI);
+    warnings.push(
+      `Düz freze eğri yüzeyi ucuyla değil kenarıyla keser: ${aci}° yamaçta ` +
+      `${fstep.toFixed(2)} mm adımla ~${scal.toFixed(2)} mm kademe kalır ` +
+      `(bilya uçta aynı adımda ${scallopHeight({ ...finishTool, type: 'ball' }, fstep).toFixed(3)} mm). ` +
+      `Düz frezeyle temiz sonuç için deseni KADEMELİ yapın (Kesit → "Kademe ` +
+      `sayısı") ya da düz tepeli profil seçin — o zaman iz hiç kalmaz.`
+    );
   }
 
   return {
     passes,
     finishMap,
-    machinedZ: null,        // önizleme isterse main.js doldurur
+    machinedZ: machined,
     stats: {
       minZ,
+      residual,
       maxLift: finComp.maxLift,
       scallop: scal,
       cutLength: cutLen,

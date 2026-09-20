@@ -7,6 +7,7 @@ import {
 import { parseStl, stlBounds, scanStl, stlToHeights, smoothHeights } from '../js/stl.js';
 import {
   tipRise, toolRadius, scallopHeight, stepoverForScallop, compensate, machinedSurface,
+  slopeTangent,
 } from '../js/tool.js';
 import { buildToolpaths, simplify3d, phaseGradient, CAM_DEFAULTS } from '../js/toolpath.js';
 import { toGcode } from '../js/gcode.js';
@@ -441,6 +442,73 @@ test('kontur takım yarıçapı kadar dışarıdan geçer', () => {
   const p = r.passes.find((x) => x.id === 'cutout').paths[0];
   const d = Math.hypot(p[0] - 100, p[1] - 100);
   assert.ok(Math.abs(d - 103.1) < 0.5, `kontur yarıçapı ${d}`);
+});
+
+test('düz frezede iz, ucun çapıyla değil desenin eğimiyle belirlenir', () => {
+  const duz = { type: 'flat', dia: 6 };
+  const bilya = { type: 'ball', dia: 6 };
+  const s = buildSurface({ samples: 300, profileKind: 'sine', depth: 12 });
+  const egim = slopeTangent(s);
+  assert.ok(egim > 0.05, `eğim ölçülemedi: ${egim}`);
+  assert.ok(Math.abs(scallopHeight(duz, 1, egim) - egim) < 1e-9, 'kademe = adım × tan(eğim)');
+  // Düz frezede çap fark etmez, eğim belirler; bilyada tam tersi.
+  assert.equal(scallopHeight(duz, 1, egim), scallopHeight({ ...duz, dia: 12 }, 1, egim));
+  assert.ok(scallopHeight(bilya, 1) !== scallopHeight({ ...bilya, dia: 12 }, 1));
+  // Hedef ize göre adım: ters çevirim tutarlı olmalı.
+  const adim = stepoverForScallop(duz, 0.1, egim);
+  assert.ok(Math.abs(scallopHeight(duz, adim, egim) - 0.1) < 1e-6);
+});
+
+/** Bir tasarımın verilen uçla gerçekte ne kadarının çıktığını ölçer. */
+function isleme(surfParams, tool) {
+  const s = buildSurface({ samples: 360, ...surfParams });
+  const c = compensate(s, tool);
+  const m = machinedSurface(s, c.z, tool);
+  let ulasti = 0; let enKotu = 0; let toplam = 0; let n = 0;
+  for (let i = 0; i < s.z.length; i++) {
+    if (!s.inside[i]) continue;
+    if (m[i] < ulasti) ulasti = m[i];
+    const d = m[i] - s.z[i];
+    if (d > enKotu) enKotu = d;
+    toplam += d; n++;
+  }
+  return { ideal: s.minZ, ulasti, enKotu, ortalama: toplam / n };
+}
+
+test('sivri dipli kesit düz frezeyle çıkmaz, yumuşak dalga çıkar', () => {
+  const duz = { type: 'flat', dia: 6 };
+  const sivri = isleme({ profileKind: 'dome', bands: 6, depth: 12 }, duz);
+  const yumusak = isleme({ profileKind: 'sine', bands: 6, depth: 12 }, duz);
+
+  // Yarım daire sırtın vadi dibi sivridir; 6 mm uç oraya giremez.
+  assert.ok(sivri.enKotu > 2, `sivri kesitte kalan ${sivri.enKotu}`);
+  assert.ok(sivri.ulasti > sivri.ideal + 2, 'sivri kesitte dibe inilebilmiş (beklenmedik)');
+
+  // Yumuşak dalgada uç her yere girer.
+  assert.ok(yumusak.ulasti < yumusak.ideal + 0.3,
+    `yumuşak kesitte dibe inilemedi: ${yumusak.ulasti} / ${yumusak.ideal}`);
+  assert.ok(yumusak.ortalama < 0.05, `ortalama sapma ${yumusak.ortalama}`);
+  assert.ok(yumusak.enKotu < sivri.enKotu / 3, 'yumuşak kesit belirgin biçimde iyi olmalı');
+});
+
+test('bant sayısı arttıkça düz frezenin işi bozulur', () => {
+  const duz = { type: 'flat', dia: 6 };
+  const az = isleme({ profileKind: 'sine', bands: 4, depth: 12 }, duz);
+  const cok = isleme({ profileKind: 'sine', bands: 12, depth: 12 }, duz);
+  assert.ok(cok.ortalama > az.ortalama, 'dar bantta sapma artmalı');
+});
+
+test('kalan malzeme takım merkezinin yükselmesiyle karıştırılmıyor', () => {
+  // Dik basamaklı yüzeyde takım MERKEZİ basamak kenarında yükselir (maxLift
+  // büyük) ama düz tabanlar pekâlâ işlenir — kalan malzeme küçüktür.
+  const surf = buildSurface({ samples: 360, profileKind: 'sine', levels: 6, depth: 15, rimWidth: 0 });
+  const res = buildToolpaths(surf, {
+    finishTool: { type: 'flat', dia: 6 }, doRough: false,
+    strategy: 'raster', finishStepover: 2,
+  });
+  assert.ok(res.stats.maxLift > 1, `maxLift ${res.stats.maxLift}`);
+  assert.ok(res.stats.residual < res.stats.maxLift / 2,
+    `kalan malzeme (${res.stats.residual}) merkez yükselmesiyle (${res.stats.maxLift}) karışmış`);
 });
 
 // ------------------------------------------------------------------ g-code

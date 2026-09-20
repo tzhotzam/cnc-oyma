@@ -111,6 +111,49 @@ ham yüzeyin üstünde kalır** — testler bunu doğruluyor.
 
 ---
 
+## Düz freze mi, bilya uç mu?
+
+Varsayılan finiş ucu **6 mm düz freze**dir, çünkü elde en çok o bulunur. Ama
+düz freze eğri yüzeyi ucuyla değil **kenarıyla** keser: yamaçta altındaki en
+yüksek noktaya oturur ve orayı düzleştirir. Bunun iki ayrı sonucu var ve
+karıştırmamak gerekir:
+
+**1. Pasolar arası iz.** Bilya uçta bu bir tırtıktır ve ucun yarıçapı belirler:
+`R − √(R²−(a/2)²)`. Düz frezede tırtık değil kademe kalır ve boyunu ucun çapı
+değil **desenin eğimi** belirler:
+
+```
+kademe ≈ yanal adım × tan(eğim)
+```
+
+Yani 12 mm'lik bir uç da 6 mm'lik de aynı izi bırakır; fark deseni ne kadar dik
+yaptığındadır.
+
+**2. Ucun giremediği yerler.** Bundan daha önemlisi budur. Sivri dipli bir
+vadiye 6 mm'lik bir uç fiziken giremez. Aynı burgu deseninin iki kesitle
+ölçülmüş hâli (6 mm düz freze, 600 mm daire):
+
+| Kesit | İdeal derinlik | Ulaşılan | Ortalama sapma | En kötü |
+|---|---|---|---|---|
+| Yarım daire sırt | −11,5 mm | **−8,4 mm** | 0,078 mm | 4,53 mm |
+| **Yumuşak dalga** | −12,0 mm | **−11,9 mm** | **0,006 mm** | 0,62 mm |
+| Düz tepeli (plato) | −11,9 mm | −10,7 mm | 0,051 mm | 2,47 mm |
+| Testere | −12,0 mm | −11,4 mm | 0,024 mm | 10,53 mm |
+
+Sonuç net: **düz frezen varsa kesiti "Yumuşak dalga" seç.** Aynı derinliğe
+inilir, sapma yirmide bire düşer. "🔩 Düz frezeye göre" hazır deseni tam olarak
+bunu kurar. Bant sayısını da abartma — bant daraldıkça uç aralarına giremez.
+
+Program bunu tahmin etmez, **ölçer**: özet çubuğundaki "Kalan malzeme",
+işlenmiş yüzeyle ideal arasındaki en büyük farktır ve önizlemede gördüğün yüzey
+zaten seçtiğin uçla gerçekten çıkacak olandır.
+
+Bilya uç alırsan (6 mm, birkaç yüz lira) her kesit açılır: yarım daire sırtta
+bile sapma 3,8 mm'den çok daha aşağı iner ve yanal adımı 0,85 mm'ye açıp aynı
+kalitede 6 kat hızlı bitirirsin.
+
+---
+
 ## Finiş stratejileri
 
 | Strateji | Ne zaman |

@@ -53,20 +53,68 @@ export function tipRise(tool, r) {
   }
 }
 
-/** Yan yana iki paso arasında kalan tırtık (scallop) yüksekliği, mm. */
-export function scallopHeight(tool, stepover) {
+/**
+ * Yan yana iki paso arasında kalan iz yüksekliği, mm.
+ *
+ * Bilya ve köşe radüslü uçta bu bir TIRTIK'tır (scallop): iki dairenin
+ * arasında kalan sırt, R − √(R²−(a/2)²). Uç yarıçapı işi belirler, yüzeyin
+ * eğimi değil.
+ *
+ * DÜZ FREZEDE bambaşka bir şey olur. Düz uç yüzeye ucuyla değil kenarıyla
+ * değer; yamaçta altındaki en yüksek noktaya oturur ve o bölgeyi düzleştirir.
+ * Geriye tırtık değil KADEME kalır ve kademenin boyu yüzeyin eğimine bağlıdır:
+ *
+ *     kademe ≈ yanal adım × tan(eğim)
+ *
+ * Yani düz frezede iz, ucun çapıyla değil desenin dikliğiyle belirlenir —
+ * dümdüz bir yüzeyde sıfır, dik yamaçta adımın kendisi kadar.
+ *
+ * @param {number} [slopeTan] yüzeyin eğim tanjantı (düz freze için gerekli)
+ */
+export function scallopHeight(tool, stepover, slopeTan = 0) {
   const s = Math.abs(stepover);
-  if (tool.type === 'flat') return 0;          // düz frezede tırtık değil, kademe kalır
+  if (tool.type === 'flat') return s * Math.max(0, slopeTan);
   const R = tool.type === 'bull' ? clamp(tool.cornerR, 0.01, toolRadius(tool)) : toolRadius(tool);
   if (s >= 2 * R) return R;
   return R - Math.sqrt(Math.max(0, R * R - (s / 2) * (s / 2)));
 }
 
-/** İstenen tırtık için gereken yanal adım (mm). */
-export function stepoverForScallop(tool, scallop) {
+/** İstenen iz yüksekliği için gereken yanal adım (mm). */
+export function stepoverForScallop(tool, scallop, slopeTan = 0) {
+  if (tool.type === 'flat') {
+    const t = Math.max(0.02, slopeTan);
+    return clamp(scallop / t, 0.02, toolRadius(tool) * 1.8);
+  }
   const R = tool.type === 'bull' ? clamp(tool.cornerR, 0.01, toolRadius(tool)) : toolRadius(tool);
   const c = clamp(scallop, 0.001, R * 0.98);
   return 2 * Math.sqrt(Math.max(0, R * R - (R - c) * (R - c)));
+}
+
+/**
+ * Yüzeyin eğim tanjantı — varsayılan olarak MEDYAN, yani tipik eğim.
+ *
+ * Neden en dik nokta değil: kademeli bir tasarımda basamak duvarları neredeyse
+ * diktir ama duvar pasolar arası iz bırakmaz, takım onu yanıyla keser. Yüksek
+ * yüzdelik alırsak böyle bir yüzeyde "korkunç kademe kalacak" deriz, oysa
+ * yüzeyin çoğu kusursuz çıkar. Medyan, yüzeyin ağırlıklı kısmını temsil eder.
+ *
+ * Bu yalnızca pasolar arası iz TAHMİNİdir. Takımın geometrik olarak
+ * giremediği yerler ayrı bir iştir; onu machinedSurface() birebir hesaplar.
+ */
+export function slopeTangent(surf, q = 0.5) {
+  const { w, h, z, mmPerPx, mmPerPy, inside } = surf;
+  const vals = [];
+  for (let r = 1; r < h - 1; r += 2) {
+    for (let c = 1; c < w - 1; c += 2) {
+      if (inside && !inside[r * w + c]) continue;
+      const gx = (z[r * w + c + 1] - z[r * w + c - 1]) / (2 * mmPerPx);
+      const gy = (z[(r + 1) * w + c] - z[(r - 1) * w + c]) / (2 * mmPerPy);
+      vals.push(Math.hypot(gx, gy));
+    }
+  }
+  if (!vals.length) return 0;
+  vals.sort((a, b) => a - b);
+  return vals[Math.min(vals.length - 1, Math.floor(q * vals.length))];
 }
 
 /**
