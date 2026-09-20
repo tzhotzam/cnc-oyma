@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<meta name="description" content="3 eksen CNC için parametrik rölyef tasarlar ve Z derinliklerini G-code olarak çıkarır.">
+<title>3 Eksen Rölyef Oyma</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🌀</text></svg>">
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+
+<header class="topbar">
+  <h1>3 Eksen Rölyef Oyma</h1>
+  <p class="tagline">Parametrik rölyef → takım telafisi → G-code</p>
+</header>
+
+<main>
+  <!-- ---------------- ÖNİZLEME ---------------- -->
+  <section class="panel preview-panel">
+    <div class="tabs" role="tablist" aria-label="Önizleme">
+      <button class="tab active" data-view="relief" role="tab" aria-selected="true">Rölyef</button>
+      <button class="tab" data-view="3d" role="tab" aria-selected="false">3B</button>
+      <button class="tab" data-view="path" role="tab" aria-selected="false">Takım yolu</button>
+      <button class="tab" data-view="section" role="tab" aria-selected="false">Kesit</button>
+    </div>
+
+    <div class="stage">
+      <canvas id="view-relief" class="view active"></canvas>
+      <div id="view-3d" class="view"></div>
+      <canvas id="view-path" class="view"></canvas>
+      <canvas id="view-section" class="view"></canvas>
+      <div id="busy" class="busy" hidden><span class="spinner"></span> Hesaplanıyor…</div>
+    </div>
+
+    <div id="section-tools" class="paint-tools" hidden>
+      <div class="segmented-buttons">
+        <button type="button" id="sec-x" class="seg active">X ekseni</button>
+        <button type="button" id="sec-y" class="seg">Y ekseni</button>
+      </div>
+      <div class="grid">
+        <label>Kesit yeri
+          <input type="range" id="c-secPos" min="0" max="1" step="0.005" value="0.5">
+          <output for="c-secPos"></output>
+        </label>
+      </div>
+    </div>
+
+    <div id="path-tools" class="paint-tools" hidden>
+      <div class="segmented-buttons">
+        <button type="button" id="pv-all" class="seg active">Hepsi</button>
+        <button type="button" id="pv-rough" class="seg">Kaba</button>
+        <button type="button" id="pv-finish" class="seg">Finiş</button>
+      </div>
+      <label class="check"><input type="checkbox" id="c-showLinks"> Boş gidişleri göster</label>
+    </div>
+
+    <div id="summary" class="summary"></div>
+    <div id="warnings" class="warnings" hidden></div>
+  </section>
+
+  <!-- ---------------- DESEN ---------------- -->
+  <section class="panel">
+    <h2>1 · Desen</h2>
+    <div class="presets" id="presets">
+      <button type="button" data-preset="foto">🌀 Fotoğraftaki burgu</button>
+      <button type="button" data-preset="spiral">🐚 Spiral</button>
+      <button type="button" data-preset="halka">◎ Halka dalga</button>
+      <button type="button" data-preset="kum">🏜️ Kum tepeleri</button>
+      <button type="button" data-preset="yelpaze">🌾 Yelpaze</button>
+      <button type="button" data-preset="orgu">🧺 Örgü</button>
+      <button type="button" data-preset="cicek">🌸 Çiçek</button>
+      <button type="button" data-preset="kademe">🗻 Kademeli</button>
+      <button type="button" id="btn-random" class="ghost">🎲 Rastgele</button>
+    </div>
+
+    <div class="grid">
+      <label>Desen ailesi
+        <select id="c-pattern">
+          <option value="twist">Burgu (paralel bantlar ortada döner)</option>
+          <option value="spiral">Spiral</option>
+          <option value="ripple">Halka dalga</option>
+          <option value="fan">Yelpaze / ışın</option>
+          <option value="dune">Kum tepeleri</option>
+          <option value="chevron">Balıksırtı (V)</option>
+          <option value="weave">Örgü</option>
+          <option value="flower">Çiçek</option>
+        </select>
+      </label>
+      <label>Bant sayısı
+        <input type="range" id="c-bands" min="2" max="40" step="1" value="7">
+        <output for="c-bands"></output>
+      </label>
+      <label>Kol sayısı <small>spiral / yelpaze / çiçek</small>
+        <input type="range" id="c-arms" min="1" max="36" step="1" value="2">
+        <output for="c-arms"></output>
+      </label>
+      <label>Burgu miktarı <small>radyan</small>
+        <input type="range" id="c-swirl" min="0" max="8" step="0.1" value="2.6">
+        <output for="c-swirl"></output>
+      </label>
+      <label>Burgu nerede yoğun
+        <select id="c-swirlMode">
+          <option value="merkez">Merkezde (fotoğraftaki gibi)</option>
+          <option value="kenar">Kenarda</option>
+          <option value="vorteks">Girdap (merkeze doğru hızlanır)</option>
+        </select>
+      </label>
+      <label>Burgu keskinliği
+        <input type="range" id="c-falloffPow" min="0.4" max="4" step="0.1" value="1.6">
+        <output for="c-falloffPow"></output>
+      </label>
+      <label>Desen açısı <small>derece</small>
+        <input type="range" id="c-angle" min="-90" max="90" step="1" value="20">
+        <output for="c-angle"></output>
+      </label>
+      <label>Dalgalanma <small>kum / balıksırtı</small>
+        <input type="range" id="c-wave" min="0" max="1" step="0.02" value="0.25">
+        <output for="c-wave"></output>
+      </label>
+      <label>Dalga sıklığı
+        <input type="range" id="c-waveFreq" min="0.5" max="6" step="0.1" value="2">
+        <output for="c-waveFreq"></output>
+      </label>
+      <label>Yaprak derinliği <small>çiçek</small>
+        <input type="range" id="c-petal" min="0" max="1" step="0.02" value="0.25">
+        <output for="c-petal"></output>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="c-logSpiral" checked> Logaritmik spiral <small>(deniz kabuğu oranı)</small>
+      </label>
+    </div>
+
+    <details>
+      <summary>Bandın kesiti — oluğun ağız şekli</summary>
+      <div class="grid">
+        <label>Kesit
+          <select id="c-profileKind">
+            <option value="dome">Yarım daire sırt (etli, fotoğraftaki)</option>
+            <option value="sine">Yumuşak dalga</option>
+            <option value="oluk">Yuvarlak dipli oluk, keskin sırt</option>
+            <option value="vee">V kesit</option>
+            <option value="saw">Testere / kademe (asimetrik)</option>
+            <option value="plato">Düz tepeli (plato)</option>
+          </select>
+        </label>
+        <label>Asimetri <small>tepeyi kaydırır</small>
+          <input type="range" id="c-skew" min="-0.9" max="0.9" step="0.05" value="0.25">
+          <output for="c-skew"></output>
+        </label>
+        <label>Tokluk <small>&lt;1 şişkin, &gt;1 sivri</small>
+          <input type="range" id="c-sharpness" min="0.3" max="3" step="0.05" value="1">
+          <output for="c-sharpness"></output>
+        </label>
+        <label>Plato genişliği
+          <input type="range" id="c-plateau" min="0" max="0.9" step="0.05" value="0.25">
+          <output for="c-plateau"></output>
+        </label>
+        <label>Kademe sayısı <small>0 = kapalı (topografik görünüm)</small>
+          <input type="range" id="c-levels" min="0" max="24" step="1" value="0">
+          <output for="c-levels"></output>
+        </label>
+      </div>
+    </details>
+  </section>
+
+  <!-- ---------------- PANEL ---------------- -->
+  <section class="panel">
+    <h2>2 · Panel ve malzeme</h2>
+    <div class="grid">
+      <label>Biçim
+        <select id="c-shape">
+          <option value="disc">Daire</option>
+          <option value="rect">Dikdörtgen</option>
+          <option value="rounded">Yuvarlak köşeli</option>
+        </select>
+      </label>
+      <label>En / çap (mm)
+        <input type="number" id="c-panelW" value="600" min="50" max="3000" step="10">
+      </label>
+      <label>Boy (mm)
+        <input type="number" id="c-panelH" value="600" min="50" max="3000" step="10">
+      </label>
+      <label>Köşe radüsü (mm)
+        <input type="number" id="c-cornerR" value="40" min="0" max="500" step="5">
+      </label>
+      <label>Malzeme kalınlığı (mm)
+        <input type="number" id="c-thickness" value="25" min="5" max="200" step="1">
+      </label>
+      <label>Malzeme görünümü <small>sadece önizleme</small>
+        <select id="c-material">
+          <option value="tas">Taş / beton</option>
+          <option value="mese">Ahşap (meşe)</option>
+          <option value="ceviz">Ahşap (ceviz)</option>
+          <option value="mdf">MDF</option>
+          <option value="beyaz">Beyaz boyalı</option>
+        </select>
+      </label>
+      <label>Harita çözünürlüğü
+        <select id="c-samples">
+          <option value="320">Taslak (hızlı)</option>
+          <option value="520" selected>Normal</option>
+          <option value="760">Yüksek</option>
+          <option value="1000">Çok yüksek (yavaş)</option>
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <!-- ---------------- DERİNLİK ---------------- -->
+  <section class="panel">
+    <h2>3 · Derinlik</h2>
+    <div class="grid">
+      <label>Bant derinliği (mm) <small>sırt ile dip arası</small>
+        <input type="number" id="c-depth" value="12" min="0.5" max="120" step="0.5">
+      </label>
+      <label>Merkezde derinlik çarpanı
+        <input type="range" id="c-depthCenter" min="0" max="2" step="0.05" value="1">
+        <output for="c-depthCenter"></output>
+      </label>
+      <label>Kenarda derinlik çarpanı
+        <input type="range" id="c-depthRim" min="0" max="2" step="0.05" value="0.7">
+        <output for="c-depthRim"></output>
+      </label>
+      <label>Genel biçim
+        <select id="c-domeShape">
+          <option value="kubbe">Kubbe (ortası şişkin)</option>
+          <option value="canak">Çanak (ortası çukur)</option>
+          <option value="yok">Düz</option>
+        </select>
+      </label>
+      <label>Kubbe/çanak yüksekliği (mm)
+        <input type="number" id="c-domeRise" value="3" min="0" max="80" step="0.5">
+      </label>
+      <label>Kenarda düz şerit (mm)
+        <input type="number" id="c-rimWidth" value="18" min="0" max="300" step="1">
+      </label>
+      <label>Merkezde düz ada (mm)
+        <input type="number" id="c-centerFlat" value="0" min="0" max="500" step="5">
+      </label>
+    </div>
+    <p class="hint">
+      Toplam derinlik malzeme kalınlığını geçemez; program en derin noktayı
+      hesaplayıp yukarıda gösterir ve gerekirse uyarır.
+    </p>
+  </section>
+
+  <!-- ---------------- TAKIM ---------------- -->
+  <section class="panel">
+    <h2>4 · Takımlar ve kesme</h2>
+
+    <details open>
+      <summary>Finiş takımı ve stratejisi</summary>
+      <div class="grid">
+        <label>Uç tipi
+          <select id="c-finishType">
+            <option value="ball">Bilya (küre) uç — önerilen</option>
+            <option value="bull">Köşe radüslü</option>
+            <option value="vbit">V uç</option>
+            <option value="flat">Düz freze</option>
+          </select>
+        </label>
+        <label>Çap (mm)
+          <input type="number" id="c-finishDia" value="6" min="0.5" max="30" step="0.5">
+        </label>
+        <label>Köşe radüsü (mm) <small>köşe radüslü uç</small>
+          <input type="number" id="c-finishCornerR" value="1" min="0.1" max="10" step="0.1">
+        </label>
+        <label>V açısı (derece)
+          <input type="number" id="c-finishAngle" value="90" min="10" max="170" step="5">
+        </label>
+        <label>Strateji
+          <select id="c-strategy">
+            <option value="raster">Satır tarama (raster)</option>
+            <option value="pattern">Desen boyunca — izler desenle aynı yönde</option>
+            <option value="spiral">Spiral (yuvarlak panelde tek parça)</option>
+            <option value="radial">Işınsal</option>
+          </select>
+        </label>
+        <label>Yanal adım (mm)
+          <input type="number" id="c-finishStepover" value="0.8" min="0.05" max="10" step="0.05">
+        </label>
+        <label>Raster açısı (derece)
+          <input type="number" id="c-finishAngleRaster" value="0" min="-90" max="90" step="5">
+        </label>
+        <label class="check"><input type="checkbox" id="c-zigzag" checked> Zikzak (gidiş-dönüş keserek)</label>
+      </div>
+      <div class="actions">
+        <button type="button" id="btn-scallop" class="ghost">Tırtığa göre adım hesapla…</button>
+        <label class="small-inline">hedef tırtık (mm)
+          <input type="number" id="c-scallopTarget" value="0.03" min="0.002" max="0.5" step="0.005">
+        </label>
+      </div>
+      <p class="hint" id="scallop-hint"></p>
+    </details>
+
+    <details>
+      <summary>Kaba paso</summary>
+      <div class="grid">
+        <label class="check"><input type="checkbox" id="c-doRough" checked> Kaba paso yap</label>
+        <label>Uç tipi
+          <select id="c-roughType">
+            <option value="flat">Düz freze</option>
+            <option value="bull">Köşe radüslü</option>
+            <option value="ball">Bilya uç</option>
+          </select>
+        </label>
+        <label>Çap (mm)
+          <input type="number" id="c-roughDia" value="6" min="1" max="30" step="0.5">
+        </label>
+        <label>Paso derinliği (mm) <small>bir seferde inilen</small>
+          <input type="number" id="c-stepdown" value="3" min="0.3" max="20" step="0.5">
+        </label>
+        <label>Yanal adım (çap %)
+          <input type="range" id="c-roughStepover" min="10" max="90" step="5" value="45">
+          <output for="c-roughStepover"></output>
+        </label>
+        <label>Finiş payı (mm)
+          <input type="number" id="c-stockToLeave" value="0.4" min="0" max="3" step="0.1">
+        </label>
+        <label class="check"><input type="checkbox" id="c-ramp" checked> Dalarken rampa yap</label>
+      </div>
+    </details>
+
+    <details>
+      <summary>Kontur kesme (paneli levhadan ayır)</summary>
+      <div class="grid">
+        <label class="check"><input type="checkbox" id="c-cutout"> Konturu kes</label>
+        <label>Köprü sayısı
+          <input type="number" id="c-tabCount" value="6" min="0" max="24" step="1">
+        </label>
+        <label>Köprü genişliği (mm)
+          <input type="number" id="c-tabWidth" value="12" min="3" max="40" step="1">
+        </label>
+        <label>Köprü kalınlığı (mm)
+          <input type="number" id="c-tabHeight" value="4" min="1" max="15" step="0.5">
+        </label>
+      </div>
+    </details>
+
+    <details>
+      <summary>Devir, ilerleme, güvenlik</summary>
+      <div class="grid">
+        <label>Devir (dev/dk)
+          <input type="number" id="c-spindle" value="18000" min="1000" max="30000" step="500">
+        </label>
+        <label>Finiş ilerlemesi (mm/dk)
+          <input type="number" id="c-feedXY" value="2200" min="100" max="10000" step="100">
+        </label>
+        <label>Kaba ilerleme (mm/dk)
+          <input type="number" id="c-feedRough" value="2800" min="100" max="10000" step="100">
+        </label>
+        <label>Dalış ilerlemesi (mm/dk)
+          <input type="number" id="c-feedPlunge" value="500" min="50" max="3000" step="50">
+        </label>
+        <label>Güvenli yükseklik (mm)
+          <input type="number" id="c-safeZ" value="6" min="1" max="100" step="1">
+        </label>
+        <label>Kısa atlamada yükseklik (mm)
+          <input type="number" id="c-clearZ" value="1.5" min="0.2" max="20" step="0.1">
+        </label>
+        <label>Kontrolcü
+          <select id="c-flavor">
+            <option value="grbl">GRBL / Candle / UGS</option>
+            <option value="mach3">Mach3 / Mach4</option>
+            <option value="fanuc">Fanuc / NCStudio</option>
+          </select>
+        </label>
+        <label>Sıfır noktası
+          <select id="c-origin">
+            <option value="center">Panelin merkezi</option>
+            <option value="corner">Sol alt köşe</option>
+          </select>
+        </label>
+      </div>
+    </details>
+  </section>
+
+  <!-- ---------------- ÇIKTI ---------------- -->
+  <section class="panel">
+    <h2>5 · Hesap ve çıktı</h2>
+    <div class="actions">
+      <button id="btn-calc" class="primary">⚙️ Takım yollarını hesapla</button>
+      <button id="dl-gcode" disabled>G-code indir (.nc)</button>
+      <button id="dl-png">Yükseklik haritası (PNG)</button>
+      <button id="dl-stl">STL indir</button>
+      <button id="dl-csv">Derinlik tablosu (CSV)</button>
+      <button id="dl-json" class="ghost">Ayarları kaydet</button>
+      <label class="upload ghost small">
+        <input type="file" id="load-json" accept=".json,application/json">
+        <span>Ayarları yükle</span>
+      </label>
+      <button id="btn-reset" class="ghost">Sıfırla</button>
+    </div>
+    <div id="report" class="table-wrap"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Makinede nasıl işlenir</h2>
+    <ol class="steps">
+      <li><b>Sıfır</b> — X0Y0 seçtiğiniz yerde (varsayılan: panelin merkezi),
+        <b>Z0 malzemenin ÜST yüzeyinde</b>. Programdaki bütün Z değerleri eksidir;
+        artı Z sadece havada gezerken kullanılır.</li>
+      <li><b>Bağlama</b> — parça iki taraflı bant + vida ya da vakum ile sağlam
+        bağlanmalı. Kontur kesiyorsanız köprüleri bırakın, yoksa parça son turda
+        fırlar.</li>
+      <li><b>Prova</b> — ilk açtığınızda Z sıfırını 50 mm yukarıda alıp programı
+        havada çalıştırın; sınırların dışına çıkmadığını görün.</li>
+      <li><b>Takım değişimi</b> — kaba ve finiş uçları farklıysa program o noktada
+        durur (M0). Yeni ucu taktıktan sonra <b>Z sıfırını tekrar alın</b>.</li>
+      <li><b>Sıra</b> — kaba paso → finiş paso → (varsa) kontur. Finişte tozu
+        üfleyin; talaş kalırsa uç izi bırakır.</li>
+    </ol>
+    <p class="hint">
+      Program CAM'in yaptığı işi yapar ama makinenizi tanımaz: ilerleme ve devir
+      değerlerini kendi tezgâhınıza ve malzemenize göre siz ayarlayacaksınız.
+      Üretilen dosyayı ilk kez çalıştırmadan önce mutlaka bir simülatörde
+      (Candle, NC Viewer, CAMotics) açıp bakın.
+    </p>
+  </section>
+</main>
+
+<footer>
+  <p>Tamamı tarayıcıda çalışır — hiçbir veri sunucuya gitmez.</p>
+</footer>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

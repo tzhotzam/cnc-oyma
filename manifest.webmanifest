@@ -1,0 +1,20 @@
+{
+  "name": "3 Eksen Rölyef Oyma",
+  "short_name": "Oyma",
+  "description": "Parametrik rölyef tasarlar, takım telafisini hesaplar ve 3 eksen CNC için G-code çıkarır.",
+  "lang": "tr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f1216",
+  "theme_color": "#111418",
+  "icons": [
+    {
+      "src": "assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
