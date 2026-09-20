@@ -1,7 +1,8 @@
 # 3 Eksen Rölyef Oyma
 
-Üç eksenli CNC router için **parametrik rölyef** tasarlar, takım telafisini
-hesaplar ve doğrudan tezgâha giden **G-code** çıkarır.
+Üç eksenli CNC router için **rölyef** tasarlar, takım telafisini hesaplar ve
+doğrudan tezgâha giden **G-code** çıkarır. Rölyefi ya hazır parametrik desen
+ailelerinden üretirsin ya da elindeki **STL modelini** yükleyip oyarsın.
 
 Tamamı tarayıcıda çalışır: sunucu yok, kurulum yok, hiçbir veri cihazından
 çıkmaz. Telefonda da açılır, ana ekrana eklenince uygulama gibi durur.
@@ -14,7 +15,33 @@ Tamamı tarayıcıda çalışır: sunucu yok, kurulum yok, hiçbir veri cihazın
 
 ## Nasıl çalışıyor
 
-### 1. Faz alanı
+### 1. Kaynak: parametrik desen ya da STL
+
+İki giriş var. **Parametrik desen** hazır ailelerden üretir (aşağıdaki faz
+alanı). **STL modeli** ise elindeki 3B modeli yukarıdan ortografik olarak
+tarar: her ızgara hücresinde en yüksek Z tutulur ("z-buffer"). Modelin altında
+kalan ve arkaya bakan yüzeyler rölyefe giremez — üç eksenli tezgâh zaten oraya
+ulaşamaz, o yüzden tarama tam olarak ucun görebildiğini verir.
+
+STL ayarları:
+
+- **Bakış ekseni** — modelin üstü hangi eksen (Z/Y/X). Çoğu model Z yukarıdır
+  ama oyuncak/karakter modelleri sık sık Y yukarı gelir. Yanlış eksende model
+  panelin küçük bir şeridine düşer; program bunu fark edip uyarır.
+- **Model dışı kalan alan** — en derine insin (model öne çıkar) ya da
+  dokunulmasın (üst yüzeyde kalsın).
+- **Ölçekleme** — varsayılan "görünen yüzeye göre". Katı bir modelde kutu
+  yüksekliğinin çoğu gövdedir; modelin tamamına göre ölçeklersek 20 mm'lik bir
+  bloğun üstündeki 3 mm'lik kabartma aralığın ancak %15'ini kullanır ve rölyef
+  sönük çıkar. Görünen aralık tam kontrast verir.
+- **Yumuşatma** — tarama basamaklarını ve ağ gürültüsünü siler (mm cinsinden).
+- **Ters çevir** — tümsek ↔ çukur. Kalıp çıkarmak için.
+- **Panel oranını modelden al** — panel en-boy oranı modelin ayak izine uyar.
+
+Derinlik, kubbe/çanak, kenar şeridi ve kademelendirme **her iki kaynakta da**
+aynı şekilde çalışır; STL'den gelen harita da bu işlemlerden geçer.
+
+### 2. Faz alanı
 
 Desen bir φ(x,y) fonksiyonundan doğar. φ'nin tam sayı kısmı hangi bantta
 olduğunuzu, ondalık kısmı bandın neresinde olduğunuzu söyler. Desenin karakteri
@@ -31,13 +58,13 @@ tamamen φ'nin biçiminden gelir.
 | **Örgü** | Birbirini kesen iki bant ailesi, yastıklı kareler. |
 | **Çiçek** | Yapraklı radyal desen. |
 
-### 2. Kesit profili
+### 3. Kesit profili
 
 Bandın ağız şekli: yarım daire sırt (etli), yumuşak dalga, yuvarlak dipli oluk,
 V, testere, düz tepeli. **Asimetri** kaydırıcısı sırtın bir yanını dikleştirir;
 **kademe sayısı** topografik basamaklar yapar.
 
-### 3. Derinlik
+### 4. Derinlik
 
 Bant derinliği mm cinsindendir. Üstüne genel bir kubbe/çanak, merkez–kenar
 derinlik farkı, kenarda düz şerit ve merkezde düz ada eklenebilir.
@@ -45,7 +72,7 @@ derinlik farkı, kenarda düz şerit ve merkezde düz ada eklenebilir.
 **Bütün Z değerleri 0 veya eksidir**: 0 = malzemenin dokunulmamış üst yüzeyi,
 −12 = o noktada 12 mm aşağı inilmiş. Artı Z sadece havada gezerken kullanılır.
 
-### 4. Takım telafisi (drop-cutter)
+### 5. Takım telafisi (drop-cutter)
 
 Bu adım programın can damarıdır. Yükseklik haritası *yüzeyin kendisidir*,
 takımın gideceği yol değil. 6 mm'lik bilya uç, 2 mm'lik bir oluğun dibine zaten
@@ -64,13 +91,13 @@ Tersi de hesaplanır (aşındırma): **önizlemede gördüğünüz yüzey, ideal
 seçtiğiniz uçla gerçekten çıkacak olanın kendisidir.** Kesit sekmesinde ikisi
 üst üste çizilir — kesikli çizgi ideal, dolu çizgi takımın bıraktığı.
 
-### 5. Pasolar
+### 6. Pasolar
 
 - **Kaba** — Z seviyeli, finiş payı bırakır, dalarken rampa yapar.
 - **Finiş** — telafi edilmiş yüzeyi birebir takip eder.
 - **Kontur** — paneli levhadan köprülerle keser (isteğe bağlı).
 
-### 6. G-code
+### 7. G-code
 
 GRBL/Candle, Mach3 veya Fanuc/NCStudio ağzından yazılır. Yorumlar ASCII'ye
 indirilir (eski kontrolcüler Türkçe karakterde takılır), yollar 0,01 mm
@@ -89,7 +116,7 @@ ham yüzeyin üstünde kalır** — testler bunu doğruluyor.
 | Strateji | Ne zaman |
 |---|---|
 | **Satır tarama** | Her işte çalışır, en öngörülebiliri. |
-| **Desen boyunca** | Yollar deseni takip eder — freze izi olukla aynı yöne düşer, zımparadan önce bile temiz görünür. Fazın gradyanına dik akış çizgileri izlenerek üretilir. |
+| **Desen boyunca** | Yollar deseni takip eder — freze izi olukla aynı yöne düşer, zımparadan önce bile temiz görünür. Fazın gradyanına dik akış çizgileri izlenerek üretilir. STL kaynağında aynı strateji **eş-yükselti** çizgilerine döner: yollar modelin kendi hatlarını takip eder. Eğimin kaybolduğu düz alanlarda raster açısına düşer, böylece hiçbir yer finişsiz kalmaz. |
 | **Spiral** | Yuvarlak panelde tek parça yol, yön değiştirmez. |
 | **Işınsal** | Merkezden kenara ışınlar; yelpaze/çiçek desenleriyle örtüşür. |
 
@@ -154,6 +181,7 @@ app.css         stiller (mobil öncelikli, karanlık tema)
 js/
   main.js       akış: desen → yüzey → telafi → yollar → G-code
   pattern.js    faz alanı, kesit profilleri, mm cinsinden Z haritası
+  stl.js        STL okuma + tepeden z-buffer taraması
   tool.js       uç geometrisi, drop-cutter telafisi, tırtık hesabı
   toolpath.js   kaba/finiş/kontur pasoları, akış çizgileri, sadeleştirme
   gcode.js      GRBL / Mach3 / Fanuc post-processor

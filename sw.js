@@ -1,7 +1,7 @@
 // Çevrimdışı çalışma için basit önbellek. three.js CDN'den geldiği için
 // 3B önizleme çevrimdışı devre dışı kalır; tasarım ve G-code üretimi çalışır.
 
-const CACHE = 'cnc-oyma-v1';
+const CACHE = 'cnc-oyma-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -10,6 +10,7 @@ const ASSETS = [
   './assets/icon.svg',
   './js/main.js',
   './js/pattern.js',
+  './js/stl.js',
   './js/tool.js',
   './js/toolpath.js',
   './js/gcode.js',

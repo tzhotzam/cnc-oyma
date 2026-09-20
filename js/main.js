@@ -1,6 +1,7 @@
 // Uygulama kabuğu: desen → yüzey → takım telafisi → yollar → G-code.
 
-import { buildSurface, sampleZ, PATTERN_DEFAULTS } from './pattern.js';
+import { buildSurface, surfaceFromHeights, sampleZ, PATTERN_DEFAULTS } from './pattern.js';
+import { parseStl, stlToHeights } from './stl.js';
 import { compensate, machinedSurface, scallopHeight, stepoverForScallop, TOOL_DEFAULTS } from './tool.js';
 import { buildToolpaths, CAM_DEFAULTS, toolLabel, strategyLabel } from './toolpath.js';
 import { toGcode, POST_DEFAULTS } from './gcode.js';
@@ -15,6 +16,10 @@ const STORE_KEY = 'cnc-oyma-v1';
 
 const state = {
   view: 'relief',
+  source: 'pattern',   // pattern | stl
+  stlTris: null,
+  stlName: '',
+  stlInfo: null,
   surf: null,        // ideal yüzey
   toolZ: null,       // takım merkez yüksekliği (telafi edilmiş)
   realZ: null,       // takımın gerçekte bırakacağı yüzey
@@ -66,6 +71,16 @@ function readPattern() {
     domeRise: num('c-domeRise', 3),
     rimWidth: num('c-rimWidth', 18),
     centerFlat: num('c-centerFlat', 0),
+  };
+}
+
+/** Izgara ölçüsü — pattern.js ile aynı kural. */
+function gridDims(p) {
+  const long = Math.max(p.panelW, p.panelH);
+  const n = Math.min(1400, Math.max(64, Math.round(p.samples)));
+  return {
+    cols: Math.max(16, Math.round((n * p.panelW) / long)),
+    rows: Math.max(16, Math.round((n * p.panelH) / long)),
   };
 }
 
@@ -130,9 +145,27 @@ function busy(on) {
   els.busy.hidden = !on;
 }
 
-function rebuild() {
+function buildActiveSurface() {
   const p = readPattern();
-  const surf = buildSurface(p);
+  if (state.source === 'stl' && state.stlTris) {
+    const { cols, rows } = gridDims(p);
+    const mmPerPx = p.panelW / (cols - 1);
+    const hm = stlToHeights(state.stlTris, {
+      cols, rows,
+      axis: str('c-stlAxis', 'z'),
+      background: str('c-stlBackground', 'dip'),
+      normalize: str('c-stlNormalize', 'gorunen'),
+      invert: bool('c-stlInvert'),
+      smoothPx: num('c-stlSmooth', 0.6) / Math.max(0.01, mmPerPx),
+    });
+    state.stlInfo = { coverage: hm.coverage, bounds: hm.bounds };
+    return surfaceFromHeights(hm, p);
+  }
+  return buildSurface(p);
+}
+
+function rebuild() {
+  const surf = buildActiveSurface();
   const tool = finishTool();
   const comp = compensate(surf, tool);
   state.surf = surf;
@@ -228,6 +261,9 @@ function report() {
     chip('Tırtık ', `${fmt(scal, 3)} mm`),
     chip('Çözünürlük ', `${fmt(s.mmPerPx, 2)} mm/örnek`),
   ];
+  if (state.source === 'stl' && state.stlTris) {
+    chips.unshift(chip('Model ', `${state.stlTris.length.toLocaleString('tr-TR')} üçgen`));
+  }
   if (state.result) {
     const st = state.result.stats;
     chips.push(chip('Toplam yol ', `${fmt(st.cutLength / 1000, 1)} m`));
@@ -247,11 +283,27 @@ function report() {
     warns.push(`Derinlik (${fmt(Math.abs(s.minZ), 1)} mm) malzeme kalınlığına çok yakın.`);
   }
   if (state.maxLift > 0.3) {
+    const care = state.source === 'stl'
+      ? 'daha ince uç, daha az derinlik ya da modelin keskin köşelerini yumuşatmak'
+      : 'daha ince uç, daha az bant ya da "yuvarlak dipli oluk" kesiti';
     warns.push(
-      `${tool.dia} mm ${toolLabel(tool)} oluk diplerine tam giremiyor: en dar yerde ` +
-      `${fmt(state.maxLift, 2)} mm sığ kalıyor. Önizleme zaten gerçekte çıkacak ` +
-      `yüzeyi gösteriyor; daha derin dip için ince uç veya az bant.`
+      `${tool.dia} mm ${toolLabel(tool)} en dar yerlere tam giremiyor: ` +
+      `${fmt(state.maxLift, 2)} mm sığ kalıyor, o köşeler uç yarıçapı kadar ` +
+      `yuvarlanır. Önizleme zaten gerçekte çıkacak yüzeyi gösteriyor; daha ` +
+      `keskin detay için ${care}.`
     );
+  }
+  if (state.source === 'stl' && state.stlInfo) {
+    if (state.stlInfo.coverage < 0.04) {
+      warns.push(
+        'Model panelin çok küçük bir kısmını kaplıyor — bakış ekseni yanlış ' +
+        'olabilir. "Bakış ekseni"ni Y ya da X deneyin.'
+      );
+    }
+    if (Math.abs(s.minZ) < 0.2) {
+      warns.push('Taramada yükseklik farkı çıkmadı: model düz bir yüzey olabilir ' +
+        'ya da bakış ekseni yanlış.');
+    }
   }
   if (state.result) for (const w of state.result.warnings) if (!warns.includes(w)) warns.push(w);
   els.warnings.hidden = warns.length === 0;
@@ -368,7 +420,10 @@ function download(filename, data, mime) {
 
 function baseName() {
   const p = readPattern();
-  return `rolyef-${p.pattern}-${Math.round(p.panelW)}x${Math.round(p.panelH)}`;
+  const ad = state.source === 'stl' && state.stlName
+    ? state.stlName.replace(/\.stl$/i, '').replace(/[^\w.-]+/g, '-').slice(0, 40)
+    : p.pattern;
+  return `rolyef-${ad}-${Math.round(p.panelW)}x${Math.round(p.panelH)}`;
 }
 
 function downloadPng() {
@@ -443,6 +498,14 @@ function syncOutputs() {
   toggleRow('c-petal', pat === 'flower');
   toggleRow('c-plateau', str('c-profileKind') === 'plato');
   toggleRow('c-finishAngleRaster', str('c-strategy') === 'raster');
+
+  // STL'de "desen boyunca" aslında modelin eş-yükselti çizgilerini takip eder.
+  const patOpt = els['c-strategy']?.querySelector('option[value="pattern"]');
+  if (patOpt) {
+    patOpt.textContent = state.source === 'stl'
+      ? 'Eş-yükselti boyunca — izler modelin çizgilerini takip eder'
+      : 'Desen boyunca — izler desenle aynı yönde';
+  }
 }
 
 function toggleRow(id, show) {
@@ -459,6 +522,51 @@ function scheduleRebuild() {
   timer = setTimeout(() => {
     try { rebuild(); } finally { busy(false); }
   }, 160);
+}
+
+function setSource(src) {
+  state.source = src;
+  els['src-pattern'].classList.toggle('active', src === 'pattern');
+  els['src-stl'].classList.toggle('active', src === 'stl');
+  els['src-pattern'].setAttribute('aria-checked', String(src === 'pattern'));
+  els['src-stl'].setAttribute('aria-checked', String(src === 'stl'));
+  els['stl-box'].hidden = src !== 'stl';
+  els['sec-desen'].hidden = src === 'stl';
+  syncOutputs();
+  rebuild();
+}
+
+async function loadStl(file) {
+  busy(true);
+  try {
+    const tris = parseStl(await file.arrayBuffer());
+    if (!tris.length) throw new Error('Dosyada üçgen bulunamadı.');
+    state.stlTris = tris;
+    state.stlName = file.name;
+
+    // Panel oranını modelden al.
+    const hm = stlToHeights(tris, { cols: 64, rows: 64, axis: str('c-stlAxis', 'z') });
+    const b = hm.bounds;
+    const ratio = b.h / (b.w || 1);
+    let note = '';
+    if (bool('c-stlAspect') && Number.isFinite(ratio) && ratio > 0) {
+      if (str('c-shape') === 'disc' && (ratio < 0.95 || ratio > 1.05)) {
+        els['c-shape'].value = 'rect';
+        note = ' Model kare olmadığı için panel biçimi dikdörtgene alındı.';
+      }
+      els['c-panelH'].value = Math.round(num('c-panelW', 600) * ratio);
+    }
+    els['stl-info'].innerHTML =
+      `<b>${file.name}</b> — ${tris.length.toLocaleString('tr-TR')} üçgen, ` +
+      `model ölçüsü ${b.w.toFixed(0)}×${b.h.toFixed(0)}×${b.d.toFixed(0)} birim. ` +
+      `Panel ölçüsünü aşağıdan sen veriyorsun, model ona ölçeklenir.${note}`;
+    setSource('stl');
+  } catch (err) {
+    els['stl-info'].textContent = 'STL okunamadı: ' + err.message;
+    state.stlTris = null;
+  } finally {
+    busy(false);
+  }
 }
 
 function setView(v) {
@@ -507,6 +615,13 @@ function init() {
     b.addEventListener('click', () => applyPreset(b.dataset.preset));
   }
   els['btn-random'].addEventListener('click', randomDesign);
+  els['src-pattern'].addEventListener('click', () => setSource('pattern'));
+  els['src-stl'].addEventListener('click', () => setSource('stl'));
+  els['file-stl'].addEventListener('change', (e) => {
+    const f = e.target.files?.[0];
+    if (f) loadStl(f);
+    e.target.value = '';
+  });
   els['btn-calc'].addEventListener('click', calc);
 
   els['sec-x'].addEventListener('click', () => { state.secAxis = 'x'; els['sec-x'].classList.add('active'); els['sec-y'].classList.remove('active'); draw(); });

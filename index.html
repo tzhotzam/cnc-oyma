@@ -67,9 +67,74 @@
     <div id="warnings" class="warnings" hidden></div>
   </section>
 
-  <!-- ---------------- DESEN ---------------- -->
+  <!-- ---------------- KAYNAK ---------------- -->
   <section class="panel">
-    <h2>1 · Desen</h2>
+    <h2>1 · Kaynak</h2>
+    <div class="segmented" role="radiogroup" aria-label="Kaynak">
+      <div class="segmented-buttons">
+        <button type="button" id="src-pattern" class="seg active" role="radio" aria-checked="true">
+          Parametrik desen
+        </button>
+        <button type="button" id="src-stl" class="seg" role="radio" aria-checked="false">
+          STL modeli
+        </button>
+      </div>
+      <p class="seg-hint">
+        Desen tarafı hazır ailelerden üretir. STL tarafı elindeki 3B modeli
+        yukarıdan tarayıp rölyefe çevirir.
+      </p>
+    </div>
+
+    <div id="stl-box" hidden>
+      <div class="uploads">
+        <label class="upload">
+          <input type="file" id="file-stl" accept=".stl,model/stl,application/sla">
+          <span>🧊 STL seç</span>
+        </label>
+      </div>
+      <p id="stl-info" class="hint">Henüz model yüklenmedi.</p>
+      <div class="grid">
+        <label>Bakış ekseni <small>modelin üstü hangi eksen</small>
+          <select id="c-stlAxis">
+            <option value="z">Z yukarı (varsayılan)</option>
+            <option value="y">Y yukarı</option>
+            <option value="x">X yukarı</option>
+          </select>
+        </label>
+        <label>Model dışı kalan alan
+          <select id="c-stlBackground">
+            <option value="dip">En derine insin (model öne çıkar)</option>
+            <option value="ust">Dokunulmasın (üst yüzeyde kalsın)</option>
+          </select>
+        </label>
+        <label>Ölçekleme
+          <select id="c-stlNormalize">
+            <option value="gorunen">Görünen yüzeye göre (önerilen)</option>
+            <option value="model">Modelin tamamına göre</option>
+          </select>
+        </label>
+        <label>Yumuşatma (mm) <small>tarama basamaklarını siler</small>
+          <input type="range" id="c-stlSmooth" min="0" max="5" step="0.1" value="0.6">
+          <output for="c-stlSmooth"></output>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="c-stlInvert"> Ters çevir <small>(tümsek ↔ çukur)</small>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="c-stlAspect" checked> Panel oranını modelden al
+        </label>
+      </div>
+      <p class="hint">
+        Tarama yukarıdan yapılır: modelin altında kalan ve arkaya bakan yüzeyler
+        rölyefe giremez — üç eksenli tezgâh zaten oralara ulaşamaz. Derinliği ve
+        kenar şeridini aşağıdaki <b>Derinlik</b> bölümünden ayarlarsın.
+      </p>
+    </div>
+  </section>
+
+  <!-- ---------------- DESEN ---------------- -->
+  <section class="panel" id="sec-desen">
+    <h2>2 · Desen</h2>
     <div class="presets" id="presets">
       <button type="button" data-preset="foto">🌀 Fotoğraftaki burgu</button>
       <button type="button" data-preset="spiral">🐚 Spiral</button>
@@ -174,7 +239,7 @@
 
   <!-- ---------------- PANEL ---------------- -->
   <section class="panel">
-    <h2>2 · Panel ve malzeme</h2>
+    <h2>3 · Panel ve malzeme</h2>
     <div class="grid">
       <label>Biçim
         <select id="c-shape">
@@ -217,7 +282,7 @@
 
   <!-- ---------------- DERİNLİK ---------------- -->
   <section class="panel">
-    <h2>3 · Derinlik</h2>
+    <h2>4 · Derinlik</h2>
     <div class="grid">
       <label>Bant derinliği (mm) <small>sırt ile dip arası</small>
         <input type="number" id="c-depth" value="12" min="0.5" max="120" step="0.5">
@@ -255,7 +320,7 @@
 
   <!-- ---------------- TAKIM ---------------- -->
   <section class="panel">
-    <h2>4 · Takımlar ve kesme</h2>
+    <h2>5 · Takımlar ve kesme</h2>
 
     <details open>
       <summary>Finiş takımı ve stratejisi</summary>
@@ -386,7 +451,7 @@
 
   <!-- ---------------- ÇIKTI ---------------- -->
   <section class="panel">
-    <h2>5 · Hesap ve çıktı</h2>
+    <h2>6 · Hesap ve çıktı</h2>
     <div class="actions">
       <button id="btn-calc" class="primary">⚙️ Takım yollarını hesapla</button>
       <button id="dl-gcode" disabled>G-code indir (.nc)</button>

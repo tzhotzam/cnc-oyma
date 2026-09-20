@@ -204,12 +204,47 @@ function baseZ(r, p) {
  *            inside:Uint8Array,minZ:number,params:object}}
  *   z[row*w+col] — mm, ≤ 0. row 0 = y=0 (aşağı), y yukarı artar (makine düzeni).
  */
-export function buildSurface(params) {
-  const p = { ...PATTERN_DEFAULTS, ...params };
+/**
+ * Yükseklik (0..1) → mm cinsinden Z. Derinlik çarpanı, kubbe/çanak, merkezdeki
+ * düz ada ve kenardaki düz şerit burada uygulanır. Hem parametrik desen hem de
+ * dışarıdan gelen (STL) yükseklik haritası aynı işlemden geçer.
+ */
+function zFromHeight(hgt, x, y, p, cx, cy, R) {
+  const nx = (x - cx) / R;
+  const ny = (y - cy) / R;
+  const r = Math.hypot(nx, ny);
+
+  const amp = lerp(p.depthCenter, p.depthRim, clamp(r, 0, 1));
+  let zz = -(1 - hgt) * p.depth * Math.max(0, amp) + baseZ(r, p);
+
+  // Merkezde düz ada.
+  if (p.centerFlat > 0) {
+    const dc = Math.hypot(x - cx, y - cy);
+    zz *= smoothstep((dc - p.centerFlat / 2) / Math.max(1, p.centerFlat / 2));
+  }
+
+  // Kenarda düz şerit: rölyef sıfıra (üst yüzeye) doğru söner.
+  const de = edgeDistance(x, y, p);
+  if (p.rimWidth > 0) zz *= smoothstep(de / p.rimWidth);
+  if (de < 0) zz = 0;
+
+  return { z: zz > 0 ? 0 : zz, inside: de >= 0 ? 1 : 0 };
+}
+
+/** Izgara ölçülerini panel ölçüsü ve istenen örnek sayısından hesaplar. */
+function gridSize(p) {
   const long = Math.max(p.panelW, p.panelH);
   const n = clamp(Math.round(p.samples), 64, 1400);
-  const w = Math.max(16, Math.round((n * p.panelW) / long));
-  const h = Math.max(16, Math.round((n * p.panelH) / long));
+  return {
+    w: Math.max(16, Math.round((n * p.panelW) / long)),
+    h: Math.max(16, Math.round((n * p.panelH) / long)),
+    long,
+  };
+}
+
+export function buildSurface(params) {
+  const p = { ...PATTERN_DEFAULTS, ...params };
+  const { w, h, long } = gridSize(p);
   const mmPerPx = p.panelW / (w - 1);
   const mmPerPy = p.panelH / (h - 1);
   const cx = p.panelW / 2;
@@ -229,7 +264,6 @@ export function buildSurface(params) {
       const i = row * w + col;
       const nx = (x - cx) / R;
       const ny = (y - cy) / R;
-      const r = Math.hypot(nx, ny);
 
       const ph = phaseAt(nx, ny, p);
       phase[i] = ph;
@@ -238,26 +272,9 @@ export function buildSurface(params) {
       if (p.pattern === 'weave') hgt = Math.max(hgt, profile(phaseAt2(nx, ny, p), p));
       if (levels > 1) hgt = Math.round(hgt * levels) / levels;
 
-      const amp = lerp(p.depthCenter, p.depthRim, clamp(r, 0, 1));
-      let zz = -(1 - hgt) * p.depth * Math.max(0, amp) + baseZ(r, p);
-
-      // Merkezde düz ada.
-      if (p.centerFlat > 0) {
-        const dc = Math.hypot(x - cx, y - cy);
-        const k = smoothstep((dc - p.centerFlat / 2) / Math.max(1, p.centerFlat / 2));
-        zz *= k;
-      }
-
-      // Kenarda düz şerit: rölyef sıfıra (üst yüzeye) doğru söner.
-      const de = edgeDistance(x, y, p);
-      inside[i] = de >= 0 ? 1 : 0;
-      if (p.rimWidth > 0) {
-        const k = smoothstep(de / p.rimWidth);
-        zz *= k;
-      }
-      if (de < 0) zz = 0;
-
-      z[i] = zz > 0 ? 0 : zz;
+      const out = zFromHeight(hgt, x, y, p, cx, cy, R);
+      inside[i] = out.inside;
+      z[i] = out.z;
       if (z[i] < minZ) minZ = z[i];
     }
   }
@@ -265,7 +282,54 @@ export function buildSurface(params) {
   return {
     w, h, mmPerPx, mmPerPy,
     panelW: p.panelW, panelH: p.panelH,
-    z, phase, inside, minZ, params: p,
+    z, phase, inside, minZ, params: p, source: 'pattern',
+  };
+}
+
+/**
+ * Dışarıdan gelen yükseklik haritasından (STL taraması, ileride görsel) yüzey.
+ * @param {{w:number,h:number,data:Float32Array}} hm 0..1 yükseklik, satır 0 = y=0 (alt)
+ * @param {object} params panel/derinlik ayarları
+ *
+ * "Desen boyunca" stratejisi faz alanının gradyanına dik gider; burada faz
+ * yerine yüksekliğin kendisi konur, böylece yollar modelin EŞ-YÜKSELTİ
+ * çizgilerini takip eder — heykelsi yüzeylerde raster'dan çok daha temiz.
+ */
+export function surfaceFromHeights(hm, params) {
+  const p = { ...PATTERN_DEFAULTS, ...params };
+  const w = hm.w;
+  const h = hm.h;
+  const mmPerPx = p.panelW / (w - 1);
+  const mmPerPy = p.panelH / (h - 1);
+  const cx = p.panelW / 2;
+  const cy = p.panelH / 2;
+  const R = Math.max(p.panelW, p.panelH) / 2;
+
+  const z = new Float32Array(w * h);
+  const phase = new Float32Array(w * h);
+  const inside = new Uint8Array(w * h);
+  const levels = Math.round(p.levels);
+  let minZ = 0;
+
+  for (let row = 0; row < h; row++) {
+    const y = row * mmPerPy;
+    for (let col = 0; col < w; col++) {
+      const i = row * w + col;
+      let hgt = clamp(hm.data[i], 0, 1);
+      if (levels > 1) hgt = Math.round(hgt * levels) / levels;
+      phase[i] = hgt * 10;
+
+      const out = zFromHeight(hgt, col * mmPerPx, y, p, cx, cy, R);
+      inside[i] = out.inside;
+      z[i] = out.z;
+      if (z[i] < minZ) minZ = z[i];
+    }
+  }
+
+  return {
+    w, h, mmPerPx, mmPerPy,
+    panelW: p.panelW, panelH: p.panelH,
+    z, phase, inside, minZ, params: p, source: 'heightmap',
   };
 }
 

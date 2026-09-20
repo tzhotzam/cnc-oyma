@@ -314,6 +314,13 @@ export function flowPaths(surf, map, cam, spacing, inset) {
   const step = Math.max(0.2, Math.min(cam.sampleStep, spacing));
   const maxSteps = Math.ceil((2.5 * (W + H)) / step);
 
+  // Düz bölgelerde gradyan sıfırdır ve takip edilecek bir çizgi yoktur. Orada
+  // yol üretmeyi bırakırsak o alan finişsiz kalır — kaba pasonun bıraktığı pay
+  // ve basamaklar öylece durur. Bu yüzden eğimin kaybolduğu yerde raster açısına
+  // düşülür: düz alanlar düz paralel satırlarla taranır.
+  const fa = (cam.finishAngle * Math.PI) / 180;
+  const flatDir = [Math.cos(fa), Math.sin(fa)];
+
   function trace(sx, sy, dir) {
     const pts = [];
     let x = sx;
@@ -329,8 +336,8 @@ export function flowPaths(surf, map, cam, spacing, inset) {
       let vy = sampleField(surf, gx, x, y);
       const m = Math.hypot(vx, vy);
       if (m < 1e-7) {
-        if (s === 0) break;
-        vx = px; vy = py;           // durgun nokta: son yönle devam
+        if (s === 0) { vx = flatDir[0]; vy = flatDir[1]; }   // düz alan
+        else { vx = px; vy = py; }                            // son yönle devam
       } else {
         vx /= m; vy /= m;
       }

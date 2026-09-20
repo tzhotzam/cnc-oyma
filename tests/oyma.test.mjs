@@ -1,7 +1,10 @@
 // 3 eksen oyma zincirini tarayıcısız doğrular:  node tests/carve.test.mjs
 import assert from 'node:assert/strict';
 
-import { buildSurface, phaseAt, profile, sampleZ, PATTERN_DEFAULTS } from '../js/pattern.js';
+import {
+  buildSurface, surfaceFromHeights, phaseAt, profile, sampleZ, PATTERN_DEFAULTS,
+} from '../js/pattern.js';
+import { parseStl, stlBounds, scanStl, stlToHeights, smoothHeights } from '../js/stl.js';
 import {
   tipRise, toolRadius, scallopHeight, stepoverForScallop, compensate, machinedSurface,
 } from '../js/tool.js';
@@ -113,6 +116,149 @@ test('faz dikişte sıçramaz (spiral/yelpaze)', () => {
   }
 });
 
+// -------------------------------------------------------------- STL girişi
+console.log('STL girişi');
+
+/** Bilinen ölçülerde, tepesi tek noktada olan bir piramit. */
+function pyramidStl(size = 100, height = 30) {
+  const h = size / 2;
+  const apex = [0, 0, height];
+  const c = [[-h, -h, 0], [h, -h, 0], [h, h, 0], [-h, h, 0]];
+  const tris = [
+    [c[0], c[1], apex], [c[1], c[2], apex], [c[2], c[3], apex], [c[3], c[0], apex],
+    [c[0], c[2], c[1]], [c[0], c[3], c[2]],
+  ];
+  const buf = new ArrayBuffer(84 + tris.length * 50);
+  const dv = new DataView(buf);
+  dv.setUint32(80, tris.length, true);
+  let o = 84;
+  for (const t of tris) {
+    o += 12;
+    for (const v of t) {
+      dv.setFloat32(o, v[0], true);
+      dv.setFloat32(o + 4, v[1], true);
+      dv.setFloat32(o + 8, v[2], true);
+      o += 12;
+    }
+    o += 2;
+  }
+  return buf;
+}
+
+test('ikili STL okunur, sınırları doğru', () => {
+  const tris = parseStl(pyramidStl(100, 30));
+  assert.equal(tris.length, 6);
+  const b = stlBounds(tris);
+  assert.ok(Math.abs(b.w - 100) < 1e-4);
+  assert.ok(Math.abs(b.h - 100) < 1e-4);
+  assert.ok(Math.abs(b.d - 30) < 1e-4);
+});
+
+test('ASCII STL de okunur ve aynı sonucu verir', () => {
+  const ascii = `solid test
+facet normal 0 0 1
+ outer loop
+  vertex 0 0 0
+  vertex 10 0 0
+  vertex 0 10 5
+ endloop
+endfacet
+endsolid test`;
+  const tris = parseStl(new TextEncoder().encode(ascii).buffer);
+  assert.equal(tris.length, 1);
+  assert.deepEqual(tris[0][2], [0, 10, 5]);
+});
+
+test('tarama piramidin tepesini ortada bulur', () => {
+  const tris = parseStl(pyramidStl(100, 30));
+  const hm = stlToHeights(tris, { cols: 81, rows: 81 });
+  const at = (c, r) => hm.data[r * hm.w + c];
+  assert.ok(at(40, 40) > 0.95, `tepe ${at(40, 40)}`);
+  assert.ok(at(0, 0) < 0.05, `köşe ${at(0, 0)}`);
+  // Yükseklik merkeze doğru tek yönlü artmalı
+  for (let c = 1; c <= 40; c++) {
+    assert.ok(at(c, 40) >= at(c - 1, 40) - 1e-6, `yamaç ${c} bozuk`);
+  }
+  assert.ok(hm.coverage > 0.95, `kapsama ${hm.coverage}`);
+});
+
+test('satır 0 aşağıdır (makine düzeni)', () => {
+  // Alt yarısı yüksek, üst yarısı alçak bir çatı: y küçükken z büyük.
+  const tris = [
+    [[0, 0, 10], [100, 0, 10], [100, 100, 0]],
+    [[0, 0, 10], [100, 100, 0], [0, 100, 0]],
+  ];
+  const hm = stlToHeights(tris, { cols: 41, rows: 41 });
+  const alt = hm.data[2 * hm.w + 20];
+  const ust = hm.data[38 * hm.w + 20];
+  assert.ok(alt > ust + 0.5, `alt ${alt} üst ${ust}`);
+});
+
+test('bakış ekseni değişince tarama değişir', () => {
+  const tris = parseStl(pyramidStl(100, 30));
+  const z = stlToHeights(tris, { cols: 41, rows: 41, axis: 'z' });
+  const y = stlToHeights(tris, { cols: 41, rows: 41, axis: 'y' });
+  let fark = 0;
+  for (let i = 0; i < z.data.length; i++) fark += Math.abs(z.data[i] - y.data[i]);
+  assert.ok(fark / z.data.length > 0.05, 'eksen değişimi etkisiz kalmış');
+});
+
+test('görünen yüzeye göre ölçekleme tam kontrast verir', () => {
+  // Katı bir model: üstte 20→30 mm arasında eğimli bir yüzey, altta aynı
+  // ayak izinde z=0 tabanı. Taban yukarıdan GÖRÜNMEZ. Modelin tamamına göre
+  // ölçeklersek kabartma aralığın ancak üçte birini kullanır ve sönük çıkar.
+  const ust = [
+    [[-50, -50, 20], [50, -50, 20], [50, 50, 30]],
+    [[-50, -50, 20], [50, 50, 30], [-50, 50, 30]],
+  ];
+  const taban = [
+    [[-50, -50, 0], [50, -50, 0], [50, 50, 0]],
+    [[-50, -50, 0], [50, 50, 0], [-50, 50, 0]],
+  ];
+  const kati = ust.concat(taban);
+  const yay = (d) => Math.max(...d) - Math.min(...d);
+
+  const gorunen = stlToHeights(kati, { cols: 41, rows: 41, normalize: 'gorunen' });
+  const model = stlToHeights(kati, { cols: 41, rows: 41, normalize: 'model' });
+
+  assert.ok(yay(gorunen.data) > 0.98, `görünen yayılım ${yay(gorunen.data)}`);
+  assert.ok(yay(model.data) < 0.4, `modele göre yayılım ${yay(model.data)}`);
+  // Görünen yüzey hep tabanın üstünde: taban haritaya hiç girmemeli.
+  assert.ok(Math.min(...model.data) > 0.6, 'gizli taban taramaya karışmış');
+});
+
+test('ters çevirme tümseği çukura döndürür', () => {
+  const tris = parseStl(pyramidStl(100, 30));
+  const d = stlToHeights(tris, { cols: 41, rows: 41 });
+  const t = stlToHeights(tris, { cols: 41, rows: 41, invert: true });
+  const i = 20 * 41 + 20;
+  assert.ok(Math.abs(d.data[i] + t.data[i] - 1) < 1e-5);
+});
+
+test('yumuşatma yüksekliği 0..1 dışına taşırmaz', () => {
+  const tris = parseStl(pyramidStl(100, 30));
+  const hm = smoothHeights(stlToHeights(tris, { cols: 61, rows: 61 }), 3);
+  for (const v of hm.data) assert.ok(v >= -1e-6 && v <= 1 + 1e-6, `taşma ${v}`);
+});
+
+test('STL yüzeyi oyma hattına girer ve derinlik sınırında kalır', () => {
+  const tris = parseStl(pyramidStl(100, 30));
+  const hm = stlToHeights(tris, { cols: 121, rows: 121 });
+  const surf = surfaceFromHeights(hm, {
+    panelW: 300, panelH: 300, shape: 'rect', depth: 14,
+    domeShape: 'yok', domeRise: 0, rimWidth: 0, depthCenter: 1, depthRim: 1,
+  });
+  assert.equal(surf.source, 'heightmap');
+  assert.ok(surf.minZ >= -14.01 && surf.minZ < -13.9, `minZ ${surf.minZ}`);
+  for (const v of surf.z) assert.ok(v <= 1e-6 && Number.isFinite(v));
+
+  const res = buildToolpaths(surf, { doRough: false, strategy: 'pattern', finishStepover: 3 });
+  const fin = res.passes.find((p) => p.id === 'finish');
+  assert.ok(fin.paths.length > 2, 'eş-yükselti yolu çıkmadı');
+  const g = toGcode(res, surf, {}, (x, y) => sampleZ(res.finishMap, x, y));
+  assert.ok(g.stats.minZ < -1, 'G-code hiç malzemeye girmemiş');
+});
+
 // ------------------------------------------------------------------ takım
 console.log('takım');
 
@@ -205,6 +351,45 @@ test('tüm stratejiler yol üretir ve Z sınırlar içinde kalır', () => {
       }
     }
   }
+});
+
+test('desen boyunca strateji düz bölgeleri de tarar', () => {
+  // Yarısı desenli, yarısı dümdüz bir yüzeyde akış çizgileri düz tarafı da
+  // kapsamalı; yoksa orası finişsiz kalır.
+  const w = 200; const h = 200;
+  const data = new Float32Array(w * h);
+  for (let r = 0; r < h; r++) {
+    for (let c = 0; c < w; c++) {
+      data[r * w + c] = c < w / 2 ? 0.5 + 0.5 * Math.sin(c / 6) : 1;
+    }
+  }
+  const surf = surfaceFromHeights({ w, h, data }, {
+    panelW: 300, panelH: 300, shape: 'rect', depth: 8,
+    domeShape: 'yok', domeRise: 0, rimWidth: 0, depthCenter: 1, depthRim: 1,
+  });
+  const res = buildToolpaths(surf, { doRough: false, strategy: 'pattern', finishStepover: 6 });
+  const paths = res.passes.find((p) => p.id === 'finish').paths;
+
+  // Panelin sağ (düz) yarısını 20 mm'lik kutulara bölüp her birine yol
+  // düşüp düşmediğine bakıyoruz. Yollar sadeleştirildiği için köşe noktaları
+  // yetmez — parçaların ÜZERİNDE yürümek gerekir (düz bir hat 2 noktadır).
+  const cell = 20;
+  const dolu = new Set();
+  for (const p of paths) {
+    for (let i = 3; i < p.length; i += 3) {
+      const ax = p[i - 3]; const ay = p[i - 2];
+      const bx = p[i]; const by = p[i + 1];
+      const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 5));
+      for (let k = 0; k <= n; k++) {
+        const x = ax + (bx - ax) * (k / n);
+        const y = ay + (by - ay) * (k / n);
+        if (x < 150) continue;
+        dolu.add(`${Math.floor(x / cell)},${Math.floor(y / cell)}`);
+      }
+    }
+  }
+  const hedef = Math.ceil(150 / cell) * Math.ceil(300 / cell);
+  assert.ok(dolu.size > hedef * 0.85, `düz yarıda ${dolu.size}/${hedef} kutu taranmış`);
 });
 
 test('finiş yolları panel sınırının dışına taşmaz', () => {
