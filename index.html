@@ -413,6 +413,50 @@
     </details>
 
     <details>
+      <summary>Takımın ölçüleri <small>(kataloğundan)</small></summary>
+      <div class="grid">
+        <label>Finiş ucu ağız sayısı (Z)
+          <input type="number" id="c-flutes" value="2" min="1" max="8" step="1">
+        </label>
+        <label>Kaba ucu ağız sayısı (Z)
+          <input type="number" id="c-roughFlutes" value="2" min="1" max="8" step="1">
+        </label>
+        <label>Kesme boyu (mm) <small>H — dişli kısım</small>
+          <input type="number" id="c-fluteLen" value="20" min="2" max="120" step="1">
+        </label>
+        <label>Sap çapı (mm) <small>d</small>
+          <input type="number" id="c-shankDia" value="6" min="2" max="25" step="0.5">
+        </label>
+        <label>İşlenecek malzeme
+          <select id="c-workMaterial">
+            <option value="mdf">MDF / sunta</option>
+            <option value="kontrplak">Kontrplak</option>
+            <option value="yumusak">Masif yumuşak (çam, ıhlamur)</option>
+            <option value="sert">Masif sert (meşe, ceviz)</option>
+            <option value="plastik">Plastik (PVC, akrilik)</option>
+            <option value="kopuk">Köpük / strafor</option>
+            <option value="alcipan">Alçı / taş görünümlü döküm</option>
+          </select>
+        </label>
+        <label>Tezgâhın en yüksek ilerlemesi (mm/dk)
+          <input type="number" id="c-maxFeed" value="6000" min="500" max="30000" step="500">
+        </label>
+      </div>
+      <div class="actions">
+        <button type="button" id="btn-feeds" class="ghost">Devire göre ilerleme hesapla…</button>
+      </div>
+      <p class="hint" id="feeds-hint">
+        Kesme boyu ve ağız sayısı ucun kataloğunda yazar. Bunları girersen program
+        derinliğin kesme boyunu aşıp aşmadığını kontrol eder ve ilerlemeyi
+        talaş payından hesaplar.
+        <br><b>Elinde hem 2 hem 3 ağızlı varsa:</b> kabada 2 ağız kullan — derin
+        dalışta yonga oluktan çıkabilmeli, 3 ağızda talaş sıkışır ve MDF yanar.
+        Finişte 3 ağız kullan — sığ kestiği için tahliye sorun değil, tur başına
+        bir fazla ağız daha temiz yüzey ve daha hızlı ilerleme verir.
+      </p>
+    </details>
+
+    <details>
       <summary>Devir, ilerleme, güvenlik</summary>
       <div class="grid">
         <label>Devir (dev/dk)

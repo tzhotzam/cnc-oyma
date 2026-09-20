@@ -11,6 +11,7 @@ import {
 } from '../js/tool.js';
 import { buildToolpaths, simplify3d, phaseGradient, CAM_DEFAULTS } from '../js/toolpath.js';
 import { toGcode } from '../js/gcode.js';
+import { suggestFeeds, chipload, toolChecks, MATERIALS } from '../js/feeds.js';
 import { surfaceToStl, heightmapPixels, depthCsv } from '../js/export.js';
 
 let passed = 0;
@@ -509,6 +510,56 @@ test('kalan malzeme takım merkezinin yükselmesiyle karıştırılmıyor', () =
   assert.ok(res.stats.maxLift > 1, `maxLift ${res.stats.maxLift}`);
   assert.ok(res.stats.residual < res.stats.maxLift / 2,
     `kalan malzeme (${res.stats.residual}) merkez yükselmesiyle (${res.stats.maxLift}) karışmış`);
+});
+
+// ------------------------------------------------------- devir ve ilerleme
+console.log('devir ve ilerleme');
+
+test('ilerleme = devir × ağız × talaş payı', () => {
+  const r = suggestFeeds({ materialKey: 'mdf', dia: 6, flutes: 2, rpm: 18000, maxFeed: 99000 });
+  const c = chipload('mdf', 6);
+  assert.ok(Math.abs(r.feed - 18000 * 2 * c.orta) < 1, `${r.feed}`);
+  assert.ok(r.feedMin < r.feed && r.feed < r.feedMax, 'aralık tutarsız');
+  assert.ok(r.plunge < r.feed, 'dalış ilerlemesi kesmeden büyük olamaz');
+});
+
+test('talaş payı çapla büyür', () => {
+  assert.ok(chipload('mdf', 12).orta > chipload('mdf', 6).orta);
+  assert.ok(chipload('mdf', 3).orta < chipload('mdf', 6).orta);
+});
+
+test('tezgâh sınırı aşılınca devir düşürülmesi söylenir', () => {
+  const r = suggestFeeds({ materialKey: 'kopuk', dia: 12, flutes: 2, rpm: 24000, maxFeed: 3000 });
+  assert.equal(r.feed, 3000);
+  assert.ok(r.notlar.length > 0, 'uyarı verilmemiş');
+  assert.ok(/dev\/dk/.test(r.notlar[0]), 'önerilen devir yazılmamış');
+});
+
+test('her malzemenin talaş payı ve devir aralığı tanımlı', () => {
+  for (const [k, m] of Object.entries(MATERIALS)) {
+    assert.ok(m.min > 0 && m.max > m.min, `${k} talaş payı bozuk`);
+    assert.ok(m.rpm[1] > m.rpm[0], `${k} devir aralığı bozuk`);
+    assert.ok(suggestFeeds({ materialKey: k, dia: 6, flutes: 2, rpm: 18000 }).feed > 0);
+  }
+});
+
+test('kesme boyundan derin iş uyarı verir', () => {
+  const az = toolChecks({ dia: 10, fluteLen: 20 }, { depth: 12, stepdown: 4 });
+  assert.equal(az.length, 0, `beklenmedik uyarı: ${az.join(' / ')}`);
+
+  const derin = toolChecks({ dia: 10, fluteLen: 20 }, { depth: 26, stepdown: 4 });
+  assert.equal(derin.length, 1);
+  assert.ok(/kesme boyu/.test(derin[0]));
+
+  const kesim = toolChecks({ dia: 10, fluteLen: 20 }, { depth: 5, stepdown: 4, thickness: 25, cutout: true });
+  assert.ok(kesim.some((u) => /levhadan ayıramazsınız/.test(u)));
+});
+
+test('paso derinliği ve sap çapı kontrol ediliyor', () => {
+  assert.ok(toolChecks({ dia: 6 }, { depth: 5, stepdown: 4 }).some((u) => /çapının yarısını/.test(u)));
+  assert.equal(toolChecks({ dia: 6 }, { depth: 5, stepdown: 3 }).length, 0);
+  assert.ok(toolChecks({ dia: 10, shankDia: 10 }, { depth: 5, stepdown: 3 }).some((u) => /ER11/.test(u)));
+  assert.equal(toolChecks({ dia: 6, shankDia: 6 }, { depth: 5, stepdown: 3 }).length, 0);
 });
 
 // ------------------------------------------------------------------ g-code

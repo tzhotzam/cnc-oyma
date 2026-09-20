@@ -154,6 +154,39 @@ kalitede 6 kat hızlı bitirirsin.
 
 ---
 
+## Takımın ölçüleri ve ilerleme
+
+Ucun kataloğundaki ölçüleri girersen (ağız sayısı Z, kesme boyu H, sap çapı d)
+program iki şey yapar.
+
+**1. İşle takımın uyuşup uyuşmadığını kontrol eder.** Kesme boyundan derin
+oyma, kalınlıktan kısa kesme boyuyla kontur kesimi, takım çapının yarısını aşan
+paso derinliği ve hobi penslerine sığmayan sap çapı — her biri somut sayıyla
+söylenir.
+
+**2. İlerlemeyi talaş payından hesaplar:**
+
+```
+ilerleme (mm/dk) = devir × ağız sayısı × talaş payı (mm/diş)
+```
+
+Talaş payı çok küçükse uç kesmez, **sürter**: ısınır, körelir, malzemeyi yakar.
+Program malzemeye göre aralığı bilir (6 mm için MDF 0,10–0,20 mm/diş; çam
+0,13–0,25; akrilik 0,08–0,15; köpük 0,30–0,60) ve çapla ölçekler.
+
+**Ağız sayısı: kabada az, finişte çok.** Ahşap ve MDF'de belirleyici olan talaş
+tahliyesidir. Kaba pasoda derin dalarken yonga oluktan çıkabilmeli — 2 ağız.
+Finiş sığ kestiği için tahliye sorun değil, tur başına bir fazla ağız daha
+temiz yüzey verir — 3 ağız. Program ikisini ayrı ayrı hesaplar.
+
+**Dikkat edilecek tuzak:** ağız sayısı arttıkça gereken ilerleme de artar ve
+tezgâh buna yetişemeyebilir. 6 mm 3 ağızlı uç, MDF'de 18.000 dev/dk ile
+8.100 mm/dk ilerleme ister; tezgâhın 6.000'de kalıyorsa uç kesmez, sürter.
+Çözüm ilerlemeyi zorlamak değil **deviri düşürmek** — program kaç devre
+inmen gerektiğini yazar (bu örnekte ~13.300).
+
+---
+
 ## Finiş stratejileri
 
 | Strateji | Ne zaman |

@@ -8,6 +8,7 @@ import {
 import { buildToolpaths, CAM_DEFAULTS, toolLabel, strategyLabel } from './toolpath.js';
 import { toGcode, POST_DEFAULTS } from './gcode.js';
 import { surfaceToStl, heightmapPixels, depthCsv } from './export.js';
+import { suggestFeeds, toolChecks, MATERIALS } from './feeds.js';
 import { drawRelief, drawToolpaths, drawSection, sizeCanvas } from './preview.js';
 import { createView3d } from './view3d.js';
 
@@ -317,6 +318,17 @@ function report() {
       );
     }
   }
+  // Takım ölçüleriyle işin uyuşmazlıkları — kesme boyu, paso, sap çapı.
+  for (const u of toolChecks(
+    { dia: tool.dia, fluteLen: num('c-fluteLen', 0), shankDia: num('c-shankDia', 0) },
+    {
+      depth: Math.abs(deepReal),
+      stepdown: num('c-stepdown', 3),
+      thickness: num('c-thickness', 25),
+      cutout: bool('c-cutout'),
+    }
+  )) warns.push(u);
+
   if (state.source === 'stl' && state.stlInfo) {
     if (state.stlInfo.coverage < 0.04) {
       warns.push(
@@ -703,6 +715,43 @@ function init() {
     }
     syncOutputs();
     scheduleRebuild();
+  });
+
+  els['btn-feeds'].addEventListener('click', () => {
+    const mat = str('c-workMaterial', 'mdf');
+    const rpm = num('c-spindle', 18000);
+    const maxFeed = num('c-maxFeed', 6000);
+    // Kaba ve finiş uçları ayrı hesaplanır: farklı çap ve farklı ağız sayısı
+    // farklı ilerleme demektir.
+    const fin = suggestFeeds({
+      materialKey: mat, dia: finishTool().dia, flutes: num('c-flutes', 2), rpm, maxFeed,
+    });
+    const kaba = suggestFeeds({
+      materialKey: mat, dia: roughTool().dia, flutes: num('c-roughFlutes', 2), rpm, maxFeed,
+    });
+
+    els['c-feedXY'].value = fin.feed;
+    els['c-feedRough'].value = kaba.feed;
+    els['c-feedPlunge'].value = Math.min(fin.plunge, kaba.plunge);
+    if (num('c-stepdown', 3) > kaba.stepdownMax) {
+      els['c-stepdown'].value = kaba.stepdownMax.toFixed(1);
+    }
+
+    const notlar = [...new Set([...fin.notlar, ...kaba.notlar])];
+    els['feeds-hint'].innerHTML =
+      `<b>${MATERIALS[mat].name}</b>, ${rpm} dev/dk:<br>` +
+      `• <b>Finiş</b> ${finishTool().dia} mm / ${num('c-flutes', 2)} ağız → ` +
+      `diş başına ${fin.chipload.toFixed(3)} mm, ilerleme <b>${fin.feed} mm/dk</b> ` +
+      `(aralık ${fin.feedMin}–${fin.feedMax}).<br>` +
+      `• <b>Kaba</b> ${roughTool().dia} mm / ${num('c-roughFlutes', 2)} ağız → ` +
+      `ilerleme <b>${kaba.feed} mm/dk</b>, paso derinliği en fazla ` +
+      `${kaba.stepdownMax.toFixed(1)} mm.<br>` +
+      `• Dalış ${Math.min(fin.plunge, kaba.plunge)} mm/dk.` +
+      (notlar.length ? `<br><b>Dikkat:</b> ${notlar.join(' ')}` : '') +
+      `<br>Bunlar başlangıç değeri: ilk pasoda yongaya bak. Toz gibi çıkıyorsa ` +
+      `ilerlemeyi artır ya da deviri düşür — uç kesmiyor, sürtüyor demektir.`;
+    syncOutputs();
+    save();
   });
 
   els['dl-gcode'].addEventListener('click', () => {
